@@ -1,0 +1,265 @@
+/* ── Historial header ── */
+.historial-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+/* ── Barra de búsqueda ── */
+.busqueda-container {
+  display: flex;
+  gap: .8rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.input-busqueda {
+  flex: 1;
+  min-width: 200px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: .9rem;
+  padding: .7rem 1rem;
+  transition: border-color .2s;
+}
+
+.input-busqueda:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+
+.select-filtro {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: .9rem;
+  padding: .7rem 1rem;
+  cursor: pointer;
+}
+
+.select-filtro:focus { outline: none; border-color: var(--cyan); }
+
+.btn-limpiar {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: .85rem;
+  padding: .7rem 1rem;
+  transition: all .2s;
+}
+
+.btn-limpiar:hover { border-color: var(--red); color: var(--red); }
+
+.resultado-busqueda {
+  color: var(--muted);
+  font-size: .82rem;
+  margin-bottom: 1rem;
+}
+
+/* ── Cards de jobs ── */
+.jobs-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.job-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.2rem 1.5rem;
+  transition: border-color .2s;
+}
+
+.job-card:hover { border-color: var(--cyan); }
+
+.job-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: .8rem;
+}
+
+.job-card-id {
+  color: var(--cyan);
+  font-size: .85rem;
+  font-family: 'Courier New', monospace;
+}
+
+.job-card-id small {
+  color: var(--muted);
+  font-size: .75rem;
+  display: block;
+  margin-top: .2rem;
+}
+
+.job-card-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+/* ── Bloques de info ── */
+.info-bloque {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+}
+
+.info-bloque-titulo {
+  color: var(--muted);
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: .2rem;
+}
+
+.info-bloque-valor {
+  color: var(--text);
+  font-size: .85rem;
+}
+
+/* ── Workers tags ── */
+.workers-row {
+  display: flex;
+  gap: .5rem;
+  flex-wrap: wrap;
+}
+
+.wtag {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: .78rem;
+  padding: .3rem .6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .1rem;
+}
+
+.wtag-label { color: var(--muted); font-size: .7rem; }
+.wtag-val   { color: var(--cyan);  font-weight: bold; }
+
+/* ── Stats resumen ── */
+.stats-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.stat-num { font-size: 1.3rem; font-weight: bold; }
+.stat-lbl { color: var(--muted); font-size: .72rem; }
+.stat-ok  { color: var(--green); }
+.stat-err { color: var(--red); }
+.stat-tot { color: var(--cyan); }
+
+/* ── Acciones ── */
+.job-acciones {
+  display: flex;
+  gap: .5rem;
+}
+
+.btn-ver {
+  background: var(--cyan);
+  border: none;
+  border-radius: 6px;
+  color: var(--bg);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: .8rem;
+  font-weight: bold;
+  padding: .4rem .9rem;
+  transition: opacity .2s;
+}
+
+.btn-ver:hover { opacity: .8; }
+
+/* ── URLs accordion ── */
+.urls-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: .8rem;
+  margin-top: 1rem;
+  padding: .4rem .9rem;
+  transition: all .2s;
+  width: 100%;
+  text-align: left;
+}
+
+.urls-toggle:hover { border-color: var(--cyan); color: var(--cyan); }
+
+.urls-accordion {
+  display: none;
+  margin-top: .8rem;
+  border-top: 1px solid var(--border);
+  padding-top: .8rem;
+}
+
+.urls-accordion.abierto { display: block; }
+
+.urls-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: .4rem;
+}
+
+.url-fila {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: .78rem;
+}
+
+.url-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-ok  { background: var(--green); }
+.dot-err { background: var(--red); }
+.dot-pen { background: var(--muted); }
+
+.url-link {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Estados vacíos ── */
+.sin-resultados {
+  text-align: center;
+  color: var(--muted);
+  padding: 3rem;
+  font-size: .9rem;
+}
+
+.loading {
+  text-align: center;
+  color: var(--muted);
+  padding: 2rem;
+}

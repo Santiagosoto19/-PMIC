@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PMIC — Estado del Job</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <header>
+    <h1>🖼️ PMIC</h1>
+    <p>Plataforma de Procesamiento Masivo de Imágenes Concurrente</p>
+  </header>
+
+  <main>
+
+    <!-- Encabezado del job -->
+    <div class="card">
+      <div class="job-header">
+        <div>
+          <p class="job-id-label">Job ID</p>
+          <p id="job-id" class="job-id-val">—</p>
+        </div>
+        <div id="estado-badge" class="badge badge-proceso">EN PROCESO</div>
+      </div>
+      <div class="job-tiempos">
+        <span>Inicio: <strong id="fecha-inicio">—</strong></span>
+        <span>Fin: <strong id="fecha-fin">—</strong></span>
+        <span>Tiempo total: <strong id="tiempo-total">—</strong></span>
+      </div>
+    </div>
+
+    <!-- Métricas por etapa -->
+    <div class="etapas-grid">
+
+      <div class="card etapa-card" id="card-descarga">
+        <h3>⬇️ Descarga</h3>
+        <div class="barra-contenedor">
+          <div class="barra" id="barra-descarga"></div>
+        </div>
+        <div class="etapa-stats">
+          <span>Procesados: <strong id="desc-procesados">0</strong></span>
+          <span>Fallidos: <strong id="desc-fallidos">0</strong></span>
+          <span>Promedio: <strong id="desc-promedio">—</strong></span>
+        </div>
+      </div>
+
+      <div class="card etapa-card" id="card-redimension">
+        <h3>📐 Redimensión</h3>
+        <div class="barra-contenedor">
+          <div class="barra" id="barra-redimension"></div>
+        </div>
+        <div class="etapa-stats">
+          <span>Procesados: <strong id="redi-procesados">0</strong></span>
+          <span>Fallidos: <strong id="redi-fallidos">0</strong></span>
+          <span>Promedio: <strong id="redi-promedio">—</strong></span>
+        </div>
+      </div>
+
+      <div class="card etapa-card" id="card-conversion">
+        <h3>🔄 Conversión</h3>
+        <div class="barra-contenedor">
+          <div class="barra" id="barra-conversion"></div>
+        </div>
+        <div class="etapa-stats">
+          <span>Procesados: <strong id="conv-procesados">0</strong></span>
+          <span>Fallidos: <strong id="conv-fallidos">0</strong></span>
+          <span>Promedio: <strong id="conv-promedio">—</strong></span>
+        </div>
+      </div>
+
+      <div class="card etapa-card" id="card-marcaagua">
+        <h3>💧 Marca de Agua</h3>
+        <div class="barra-contenedor">
+          <div class="barra" id="barra-marcaagua"></div>
+        </div>
+        <div class="etapa-stats">
+          <span>Procesados: <strong id="agua-procesados">0</strong></span>
+          <span>Fallidos: <strong id="agua-fallidos">0</strong></span>
+          <span>Promedio: <strong id="agua-promedio">—</strong></span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Resumen global -->
+    <div class="card">
+      <h3>Resumen global</h3>
+      <div class="resumen-grid">
+        <div class="resumen-item">
+          <span class="resumen-num" id="total-recibidos">—</span>
+          <span class="resumen-label">Imágenes recibidas</span>
+        </div>
+        <div class="resumen-item">
+          <span class="resumen-num resumen-ok" id="total-ok">—</span>
+          <span class="resumen-label">Completadas</span>
+        </div>
+        <div class="resumen-item">
+          <span class="resumen-num resumen-err" id="total-err">—</span>
+          <span class="resumen-label">Con error</span>
+        </div>
+        <div class="resumen-item">
+          <span class="resumen-num" id="pct-exito">—</span>
+          <span class="resumen-label">% Éxito</span>
+        </div>
+        <div class="resumen-item">
+          <span class="resumen-num" id="pct-error" style="color: red;">—</span>
+          <span class="resumen-label" >% Falla</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Botón volver -->
+    <div class="volver">
+      <a href="index.html" class="btn-volver">← Nueva solicitud</a>
+    </div>
+
+  </main>
+
+  <script src="js/api.js"></script>
+  <script src="js/metrics.js"></script>
+
+</body>
+</html>

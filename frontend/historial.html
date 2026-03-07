@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PMIC — Historial de Jobs</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/historial.css">
+</head>
+<body>
+
+  <header>
+    <h1>🖼️ PMIC</h1>
+    <p>Plataforma de Procesamiento Masivo de Imágenes Concurrente</p>
+  </header>
+
+  <main>
+    <div class="card">
+
+      <div class="historial-header">
+        <h2>Historial de Jobs</h2>
+        <a href="index.html" class="btn-volver">← Nueva solicitud</a>
+      </div>
+
+      <div class="busqueda-container">
+        <input
+          type="text"
+          id="input-busqueda"
+          class="input-busqueda"
+          placeholder="Buscar por Job ID o URL..."
+          oninput="filtrar()"
+        />
+        <select id="filtro-estado" class="select-filtro" onchange="filtrar()">
+          <option value="">Todos los estados</option>
+          <option value="COMPLETADO">Completado</option>
+          <option value="COMPLETADO_CON_ERRORES">Con errores</option>
+          <option value="FALLIDO">Fallido</option>
+          <option value="EN_PROCESO">En proceso</option>
+        </select>
+        <button class="btn-limpiar" onclick="limpiarFiltros()">✕ Limpiar</button>
+      </div>
+
+      <div id="resultado-texto" class="resultado-busqueda"></div>
+      <div id="contenido"><div class="loading">Cargando historial...</div></div>
+
+    </div>
+  </main>
+
+  <script src="js/api.js"></script>
+  <script src="js/historial.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PMIC — Procesamiento de Imágenes</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <header>
+    <h1>🖼️ PMIC</h1>
+    <p>Plataforma de Procesamiento Masivo de Imágenes Concurrente</p>
+    <a href="historial.html" style="color: var(--muted); font-size: .85rem; text-decoration: none;">
+    Ver historial de jobs →
+  </a>
+
+  </header>
+
+  <main>
+    <div class="card">
+      <h2>Nueva solicitud</h2>
+
+      <!-- URLs -->
+      <div class="field">
+        <label for="urls">URLs de imágenes <span class="hint">(una por línea, máx. 100)</span></label>
+        <textarea id="urls" rows="8" placeholder="https://ejemplo.com/imagen1.jpg&#10;https://ejemplo.com/imagen2.jpg"></textarea>
+        <span id="url-count" class="counter">0 URLs</span>
+      </div>
+
+      <!-- Workers -->
+      <div class="field">
+        <label>Configuración de workers</label>
+        <div class="workers-grid">
+
+          <div class="worker-item">
+            <span class="worker-label">Descarga</span>
+            <div class="worker-controls">
+              <button class="btn-num" onclick="cambiarWorker('descarga', -1)">−</button>
+              <span id="val-descarga" class="worker-val">2</span>
+              <button class="btn-num" onclick="cambiarWorker('descarga', 1)">+</button>
+            </div>
+            <span class="worker-hint">IO-bound</span>
+          </div>
+
+          <div class="worker-item">
+            <span class="worker-label">Redimensión</span>
+            <div class="worker-controls">
+              <button class="btn-num" onclick="cambiarWorker('redimension', -1)">−</button>
+              <span id="val-redimension" class="worker-val">2</span>
+              <button class="btn-num" onclick="cambiarWorker('redimension', 1)">+</button>
+            </div>
+            <span class="worker-hint">CPU-bound</span>
+          </div>
+
+          <div class="worker-item">
+            <span class="worker-label">Conversión</span>
+            <div class="worker-controls">
+              <button class="btn-num" onclick="cambiarWorker('conversion', -1)">−</button>
+              <span id="val-conversion" class="worker-val">2</span>
+              <button class="btn-num" onclick="cambiarWorker('conversion', 1)">+</button>
+            </div>
+            <span class="worker-hint">CPU-bound</span>
+          </div>
+
+          <div class="worker-item">
+            <span class="worker-label">Marca de Agua</span>
+            <div class="worker-controls">
+              <button class="btn-num" onclick="cambiarWorker('marcaAgua', -1)">−</button>
+              <span id="val-marcaAgua" class="worker-val">2</span>
+              <button class="btn-num" onclick="cambiarWorker('marcaAgua', 1)">+</button>
+            </div>
+            <span class="worker-hint">CPU-bound</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Error -->
+      <div id="error-msg" class="error-msg hidden"></div>
+
+      <!-- Botón -->
+      <button id="btn-procesar" onclick="procesarImagenes()">
+        Iniciar procesamiento
+      </button>
+
+    </div>
+  </main>
+
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+
+</body>
+</html>

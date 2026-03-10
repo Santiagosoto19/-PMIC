@@ -1,10 +1,10 @@
-const API_BASE = 'http://localhost:3000/api/v1';
+const API_BASE = '/api/v1';
 
 async function postProcesar(urls, workers) {
   const response = await fetch(`${API_BASE}/procesar`, {
-    method:  'POST',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ urls, workers }),
+    body: JSON.stringify({ urls, workers }),
   });
   if (!response.ok) {
     const err = await response.json();

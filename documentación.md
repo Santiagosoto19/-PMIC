@@ -55,7 +55,10 @@ graph TB
     B -->|GET /estado/:jobId| D
     C -->|GET /jobs| D
     D --> E --> F --> G
-    G --> W1 --> W2 --> W3 --> W4
+    G --> W1
+    W1 -->|"empuja a 3 colas"| W2
+    W1 -->|"al mismo tiempo"| W3
+    W1 -->|"en paralelo"| W4
     W1 --> S1
     W2 --> S2
     W3 --> S3
@@ -167,11 +170,15 @@ sequenceDiagram
 │       │   └── errorManager.js        ← Manejo centralizado de errores
 │       ├── queues/
 │       │   └── queueManager.js        ← 📬 Colas con eventos (CLAVE)
-│       ├── workers/                   ← 👷 WORKERS CONCURRENTES
-│       │   ├── download.worker.js     ← Etapa 1: Descarga
-│       │   ├── resize.worker.js       ← Etapa 2: Redimensión
-│       │   ├── convert.worker.js      ← Etapa 3: Conversión
-│       │   └── watermark.worker.js    ← Etapa 4: Marca de agua
+│       ├── workers/                   ← 👷 HILOS REALES DEL SO
+│       │   ├── download.worker.js     ← Gestor de hilos de descarga
+│       │   ├── download.thread.js     ← Código que corre DENTRO del hilo de descarga
+│       │   ├── resize.worker.js       ← Gestor de hilos de redimensión
+│       │   ├── resize.thread.js       ← Código que corre DENTRO del hilo de resize
+│       │   ├── convert.worker.js      ← Gestor de hilos de conversión
+│       │   ├── convert.thread.js      ← Código que corre DENTRO del hilo de convert
+│       │   ├── watermark.worker.js    ← Gestor de hilos de marca de agua
+│       │   └── watermark.thread.js    ← Código que corre DENTRO del hilo de watermark
 │       ├── database/
 │       │   ├── db.js                  ← Pool de conexiones PostgreSQL
 │       │   ├── migrations.js          ← Crea tablas jobs + imagenes
@@ -255,32 +262,43 @@ class JobManager {
 
 ```javascript
 export async function ejecutarPipeline(jobId, workItems, workersConfig) {
-  const qm = new QueueManager();  // Cola fresca por cada job
+  const qm    = new QueueManager();
+  const total = workItems.length;
 
-  // Lanzar workers para cada etapa (como "hilos" escuchando)
-  lanzarWorkersDescarga(workersConfig.descarga, jobId, qm);
-  lanzarWorkersRedimension(workersConfig.redimension, jobId, qm);
-  lanzarWorkersConversion(workersConfig.conversion, jobId, qm);
-  lanzarWorkersMarcaAgua(workersConfig.marcaAgua, jobId, qm);
+  // Decirle a cada cola cuántos items esperar
+  qm.redimension.setEsperados(total);
+  qm.conversion.setEsperados(total);
+  qm.marcaAgua.setEsperados(total);
 
-  // Empujar todas las URLs a la cola de descarga
+  // ⭐ Lanzar HILOS REALES del SO para las 4 etapas
+  const hilosDescarga    = lanzarWorkersDescarga(n, jobId, qm);    // Retorna Worker[]
+  const hilosRedimension = lanzarWorkersRedimension(n, jobId, qm);
+  const hilosConversion  = lanzarWorkersConversion(n, jobId, qm);
+  const hilosMarcaAgua   = lanzarWorkersMarcaAgua(n, jobId, qm);
+
   qm.descarga.pushMuchos(workItems);
 
-  // Esperar que cada etapa termine SECUENCIALMENTE
-  await qm.descarga.esperarVacia();
-  await qm.redimension.esperarVacia();
-  await qm.conversion.esperarVacia();
-  await qm.marcaAgua.esperarVacia();
+  // ⭐⭐ LAS 4 ETAPAS CORREN EN PARALELO ⭐⭐
+  await Promise.all([
+    qm.descarga.esperarVacia(),
+    qm.redimension.esperarVacia(),
+    qm.conversion.esperarVacia(),
+    qm.marcaAgua.esperarVacia(),
+  ]);
+
+  // Terminar TODOS los hilos del SO
+  [...hilosDescarga, ...hilosRedimension, ...hilosConversion, ...hilosMarcaAgua]
+    .forEach(t => t.terminate());
 }
 ```
 
 > [!IMPORTANT]
-> **Esto es el CORAZÓN del sistema de concurrencia.** Fíjate que:
-> 1. Se lanzan **N workers por etapa** (como "hilos virtuales")
-> 2. Se empujan todos los items a la primera cola
-> 3. Cuando un worker de descarga termina un item, lo empuja a la cola de redimensión
-> 4. Los workers de redimensión ya están escuchando y lo toman inmediatamente
-> 5. Y así sucesivamente → **las etapas se solapan en el tiempo**
+> **Esto es el CORAZÓN del sistema de concurrencia real.** Fíjate que:
+> 1. Se crean **N hilos reales del SO** por etapa con `new Worker()` de `worker_threads`
+> 2. Cada hilo tiene su propio **V8 engine**, **event loop** y **threadId**
+> 3. Cuando un hilo de descarga termina, empuja a las **3 colas al mismo tiempo**
+> 4. Resize, Convert y Watermark procesan sobre el **archivo descargado original en paralelo**
+> 5. `Promise.all` espera las 4 etapas **simultáneamente** → paralelismo real
 
 ---
 
@@ -355,56 +373,59 @@ class Queue extends EventEmitter {
 
 ---
 
-### 6. Workers — Los "Hilos" que Procesan
+### 6. Workers — Hilos REALES del Sistema Operativo
 
-Todos los workers siguen el **mismo patrón**:
+Cada worker es un **hilo real del SO** creado con `worker_threads` de Node.js. Hay 2 archivos por etapa:
+- `.worker.js` → **Gestor** (crea hilos, conecta colas, maneja resultados)
+- `.thread.js` → **Hilo** (el código que corre DENTRO del thread real del SO)
 
 ```javascript
-// 1. Se lanzan N instancias por etapa
-export function lanzarWorkersDescarga(n, jobId, qm) {
+// resize.worker.js — GESTOR: crea hilos reales
+import { Worker } from 'worker_threads';
+
+export function lanzarWorkersRedimension(n, jobId, qm) {
+  const threads = [];
   for (let i = 1; i <= n; i++) {
-    escucharCola(`Descarga-W${i}`, jobId, qm);  // Cada worker tiene un nombre
+    // ⭐ Crear HILO REAL del sistema operativo
+    const thread = new Worker('./resize.thread.js', {
+      workerData: { workerNombre: `Redimension-W${i}` }
+    });
+
+    thread.on('message', async (msg) => {
+      await stateStore.registrarResultado(...);
+      cola.terminarItem();
+    });
+
+    threads.push(thread);
   }
-}
-
-// 2. Cada worker escucha eventos de la cola
-function escucharCola(workerNombre, jobId, qm) {
-  const cola = qm.descarga;
-
-  cola.on('itemDisponible', async () => {
-    const item = cola.pop();        // Tomar un item de la cola
-    if (!item) return;               // Otro worker ya lo tomó (condición de carrera)
-    item.workerNombre = workerNombre;
-    await procesarDescarga(item, qm); // Hacer el trabajo pesado
-    cola.terminarItem();              // Marcar como terminado
-  });
-}
-
-// 3. Procesar y pasar al siguiente
-async function procesarDescarga(item, qm) {
-  try {
-    // ... descargar imagen ...
-    await stateStore.registrarResultado(...);  // Actualizar BD + memoria
-    qm.redimension.push(item);                // → Siguiente etapa
-  } catch (error) {
-    await errorManager.registrarError('descarga', item, error, tiempoSeg);
-  }
+  return threads;  // ← Para poder terminarlos después
 }
 ```
 
-#### Las 4 Etapas de Procesamiento:
+```javascript
+// resize.thread.js — HILO: corre en un thread real del SO
+import { parentPort, workerData, threadId } from 'worker_threads';
+import sharp from 'sharp';
 
-| Etapa | Worker | ¿Qué hace? | Tipo | Herramienta |
-|-------|--------|------------|------|-------------|
-| **1. Descarga** | `download.worker.js` | Descarga la imagen desde la URL usando `fetch` | **I/O-bound** (red) | `fetch` + `stream` |
-| **2. Redimensión** | `resize.worker.js` | Reduce la imagen a máximo 800px | **CPU-bound** | `sharp.resize()` |
-| **3. Conversión** | `convert.worker.js` | Convierte cualquier formato a PNG | **CPU-bound** | `sharp.png()` |
-| **4. Marca de agua** | `watermark.worker.js` | Superpone texto SVG "PMIC © 2024" | **CPU-bound** | `sharp.composite()` |
+console.log(`[HILO] ${workerData.workerNombre} creado (threadId: ${threadId})`);
+
+parentPort.on('message', async ({ item }) => {
+  await sharp(item.rutaActual).resize(...).toFile(rutaSalida);
+  parentPort.postMessage({ tipo: 'completado', item, resultado });
+});
+```
+
+#### Las 4 Etapas (todas con hilos reales):
+
+| Etapa | Gestor | Hilo | ¿Qué hace? | Tipo |
+|-------|--------|------|------------|------|
+| **Descarga** | `download.worker.js` | `download.thread.js` | `fetch()` + stream | **I/O-bound** |
+| **Redimensión** | `resize.worker.js` | `resize.thread.js` | `sharp.resize()` | **CPU-bound** |
+| **Conversión** | `convert.worker.js` | `convert.thread.js` | `sharp.png()` | **CPU-bound** |
+| **Marca de agua** | `watermark.worker.js` | `watermark.thread.js` | `sharp.composite()` | **CPU-bound** |
 
 > [!TIP]
-> **‿I/O-bound vs CPU-bound** es un concepto fundamental:
-> - **I/O-bound (Descarga):** El worker pasa la mayoría del tiempo *esperando* datos de la red. Poner más workers es muy eficiente porque mientras uno espera, otros trabajan.
-> - **CPU-bound (Redimensión, Conversión, Marca de agua):** El worker pasa el tiempo *calculando*. Poner demasiados workers en un solo núcleo no ayuda mucho. Por eso la descarga permite hasta 10 workers, pero las demás solo 8.
+> **Cada hilo tiene su propio V8 engine, event loop y threadId.** Se comunican con el hilo principal vía `postMessage()` / `parentPort`. Esto es paralelismo REAL a nivel del sistema operativo.
 
 ---
 
@@ -477,7 +498,7 @@ class ErrorManager {
 | `imagen_id` | TEXT PK | UUID de la imagen |
 | `job_id` | TEXT FK → jobs | A qué job pertenece |
 | `url_original` | TEXT | La URL de donde se descarga |
-| `estado` | TEXT | Progresa: `PENDIENTE` → `DESCARGADA` → `REDIMENSIONADA` → `CONVERTIDA` → `COMPLETADA` |
+| `estado` | TEXT | `PENDIENTE` → `DESCARGADA` → `COMPLETADA` (cuando las 3 etapas paralelas terminan) |
 | `ruta_descargada` | TEXT | Ruta del archivo descargado |
 | `ruta_redimensionada` | TEXT | Ruta del archivo redimensionado |
 | `ruta_convertida` | TEXT | Ruta del archivo convertido |
@@ -579,53 +600,44 @@ class ErrorManager {
 
 ## 🔑 Conceptos de Sistemas Distribuidos Implementados
 
-### 1. Patrón Pipeline (Tubería)
+### 1. Patrón Pipeline con Fan-Out Paralelo
 
 ```
-URL → [DESCARGA] → [REDIMENSIÓN] → [CONVERSIÓN] → [MARCA DE AGUA] → Resultado
+                         ┌→ [Cola RESIZE]    → Hilos R1, R2 → Disco
+URL → [Cola DESCARGA] → ├→ [Cola CONVERT]   → Hilos C1, C2 → Disco  ← AL MISMO TIEMPO
+       Hilos D1-D3       └→ [Cola WATERMARK] → Hilos M1, M2 → Disco
 ```
 
-Cada etapa es un procesador independiente. La salida de una etapa es la entrada de la siguiente. Las etapas pueden ejecutarse **en paralelo** (mientras la descarga procesa la imagen 5, la redimensión puede estar procesando la imagen 3).
+Después de descargar, la imagen se empuja a **3 colas simultáneamente**. Las 3 etapas de procesamiento corren **en paralelo real** sobre el archivo descargado.
 
 ### 2. Patrón Producer-Consumer con Colas
 
-```
-Productores (etapa N)  →  [Cola]  →  Consumidores (etapa N+1)
-```
+Las colas desacoplan las etapas. La descarga produce items y los 3 consumidores (resize, convert, watermark) los toman independientemente.
 
-Las colas desacoplan las etapas. Si la descarga es más rápida que la redimensión, los items se acumulan en la cola y los workers de redimensión los procesan a su ritmo.
+### 3. Hilos Reales del SO (worker_threads)
 
-### 3. Concurrencia con EventEmitter (Hilos Simulados)
-
-En Node.js no hay hilos reales (es single-threaded), pero los `EventEmitter` + `async/await` simulan concurrencia:
-- Cada worker "escucha" el evento `itemDisponible`
-- Cuando hay un item, lo toma y procesa
-- Mientras espera I/O (descarga de red), el event loop atiende otros workers
-- **Sharp** (la librería de imágenes) sí usa hilos del sistema operativo internamente (C++ threads)
+Cada worker es un **hilo real del sistema operativo** creado con `new Worker()` de `worker_threads`:
+- Cada hilo tiene su propio **V8 engine** y **event loop**
+- Cada hilo tiene un **threadId** único del SO
+- Se comunican vía `postMessage()` / `parentPort`
+- **Paralelismo REAL** — los hilos corren en diferentes CPUs
 
 ### 4. Fire-and-Forget (Procesamiento asíncrono)
 
-La API responde **inmediatamente** con un `jobId`. El procesamiento real ocurre en segundo plano. El cliente hace **polling** para consultar el progreso.
+La API responde **inmediatamente** con un `jobId`. El procesamiento con hilos reales ocurre en segundo plano. El cliente hace **polling** para consultar el progreso.
 
 ### 5. Estado Dual (Cache en memoria + Persistencia)
 
-- Memoria (`Map`) → Alta velocidad, sin latencia de red
-- PostgreSQL → Persistencia, consultas complejas, historial
+- Memoria (`Map`) → Alta velocidad para polling del dashboard
+- PostgreSQL → Persistencia, historial
 
 ### 6. Tolerancia a Fallos Parciales
 
-Si una imagen falla en cualquier etapa:
-- El error se registra en la BD
-- Las demás imágenes **continúan** normalmente
-- El estado final refleja si hubo errores: `COMPLETADO_CON_ERRORES`
+Si una imagen falla en cualquier etapa, el error se registra pero las demás **continúan**.
 
 ### 7. Pool de Conexiones
 
-```javascript
-const pool = new Pool({ max: 20 });  // Máximo 20 conexiones simultáneas
-```
-
-En lugar de crear una conexión a PostgreSQL por cada query, se reutiliza un pool de conexiones. Esto es fundamental cuando hay muchos workers haciendo queries concurrentes.
+Pool de conexiones PostgreSQL para queries concurrentes desde múltiples hilos.
 
 ---
 
@@ -633,15 +645,15 @@ En lugar de crear una conexión a PostgreSQL por cada query, se reutiliza un poo
 
 | Tecnología | Propósito |
 |-----------|-----------|
-| **Node.js** | Runtime del backend (event loop, async I/O) |
-| **Fastify** | Framework HTTP rápido (como Express pero más veloz) |
-| **Sharp** | Procesamiento de imágenes (redimensión, conversión, composición) — usa C++ internally |
-| **PostgreSQL** | Base de datos relacional para persistencia |
-| **pg (node-postgres)** | Driver/pool de conexiones a PostgreSQL |
-| **EventEmitter** | Mecanismo de señalización entre producers y consumers |
-| **UUID** | Generación de identificadores únicos para jobs e imágenes |
-| **Swagger** | Documentación automática de la API |
-| **Pino** | Logger de alto rendimiento |
+| **Node.js** | Runtime del backend |
+| **worker_threads** | **Hilos reales del SO** para paralelismo real |
+| **Fastify** | Framework HTTP rápido |
+| **Sharp** | Procesamiento de imágenes (usa C++ threads internamente) |
+| **PostgreSQL** | Base de datos relacional |
+| **Docker** | Contenedor para PostgreSQL |
+| **ngrok** | Túnel para exponer a internet |
+| **EventEmitter** | Señalización entre colas y gestores de hilos |
+| **UUID** | IDs únicos para jobs e imágenes |
 
 ---
 
@@ -649,46 +661,40 @@ En lugar de crear una conexión a PostgreSQL por cada query, se reutiliza un poo
 
 | Concepto del taller | Implementación en el código |
 |--------------------|-----------------------------|
-| **Hilos (threads)** | Los **workers** simulan hilos usando `EventEmitter` + `async/await`. Internamente, Sharp usa threads C++ reales del libuv thread pool |
-| **Procesos** | El backend corre como un **solo proceso** Node.js. El pool de PostgreSQL maneja conexiones como "procesos remotos" |
-| **Concurrencia** | Múltiples workers procesan imágenes **simultáneamente** gracias al event loop de Node.js |
-| **Paralelismo real** | Sharp ejecuta operaciones de imagen en threads nativos del SO (libuv worker threads), logrando paralelismo real en CPU |
-| **Sincronización** | Las **colas** actúan como mecanismo de sincronización. `esperarVacia()` es como un **barrier/join** |
-| **Sección crítica** | El `pop()` de la cola: si dos workers hacen `pop()` simultáneamente para el mismo item, uno obtiene `null` (protección contra race condition) |
-| **Productor-Consumidor** | Cada etapa es un consumidor de la cola anterior y un productor para la cola siguiente |
-| **Pipeline** | Las 4 etapas forman un pipeline donde diferentes imágenes están en diferentes etapas al mismo tiempo |
-
-> [!CAUTION]
-> **Nota importante sobre Node.js y hilos:** Node.js es single-threaded en su event loop, pero:
-> 1. Las operaciones I/O (fetch, fs) son **non-blocking** — se delegan al SO
-> 2. Sharp usa el **libuv thread pool** (4 threads por defecto) para operaciones CPU
-> 3. PostgreSQL procesa queries en su propio proceso separado
-> 
-> Por eso el sistema puede procesar múltiples imágenes "al mismo tiempo" aunque sea "un solo hilo".
+| **Hilos (threads)** | `new Worker()` de `worker_threads` — cada worker es un **hilo real del SO** con su propio threadId |
+| **Paralelismo real** | 4 etapas con N hilos cada una corriendo en **CPUs diferentes** simultáneamente |
+| **Concurrencia** | Múltiples hilos procesan imágenes al mismo tiempo via `Promise.all` |
+| **Sincronización** | `esperarVacia()` es como un **barrier/join**. `setEsperados()` previene resolución prematura |
+| **Comunicación entre hilos** | `postMessage()` (hilo principal → worker) y `parentPort` (worker → hilo principal) |
+| **Productor-Consumidor** | Descarga produce para 3 colas. Resize, Convert, Watermark consumen independientemente |
+| **Exclusión mutua** | El `pop()` retorna `null` si otro hilo ya tomó el item (race condition safe) |
+| **Pipeline** | Las 4 etapas corren en paralelo con `Promise.all` |
+| **Fan-Out** | Cada descarga empuja a 3 colas simultáneamente |
 
 ---
 
-## 📊 Ejemplo de Ejecución
+## 📊 Ejemplo de Ejecución Paralela
 
-Si envías **10 URLs** con la configuración `descarga: 3, redimension: 2, conversion: 2, marcaAgua: 2`:
+Si envías **5 URLs** con `descarga: 3, redimension: 2, conversion: 2, marcaAgua: 2`:
 
 ```
-Tiempo →
-Worker D-1: [img1]----[img4]--------[img7]--------[img10]
-Worker D-2: [img2]--------[img5]--------[img8]
-Worker D-3: [img3]--------[img6]--------[img9]
-                ↓              ↓
-Worker R-1: ----[img1]--[img3]--[img5]--[img7]--[img9]
-Worker R-2: ------[img2]--[img4]--[img6]--[img8]--[img10]
-                    ↓              ↓
-Worker C-1: ------[img1]--[img3]--[img5]--[img7]--[img9]
-Worker C-2: --------[img2]--[img4]--[img6]--[img8]--[img10]
-                      ↓              ↓
-Worker M-1: --------[img1]--[img3]--[img5]--[img7]--[img9]
-Worker M-2: ----------[img2]--[img4]--[img6]--[img8]--[img10]
+Tiempo →  0s      1s      2s      3s      4s      5s
+
+Hilo D-1: [img1]------[img4]------
+Hilo D-2: [img2]----------[img5]--         ← DESCARGA
+Hilo D-3: [img3]------------------
+              ↓  ↓  ↓
+Hilo R-1: ----[img1]--[img3]--[img5]        ← RESIZE
+Hilo R-2: ------[img2]--[img4]----         (al mismo tiempo)
+              ↓  ↓  ↓
+Hilo C-1: ----[img1]--[img3]--[img5]        ← CONVERT
+Hilo C-2: ------[img2]--[img4]----         (al mismo tiempo)
+              ↓  ↓  ↓
+Hilo M-1: ----[img1]--[img3]--[img5]        ← WATERMARK
+Hilo M-2: ------[img2]--[img4]----         (al mismo tiempo)
 ```
 
-**Las etapas se solapan:** mientras la descarga trabaja en la imagen 7, la redimensión puede estar en la imagen 4, la conversión en la imagen 2, y la marca de agua en la imagen 1. **Esto es el poder del pipeline concurrente.**
+**Las 4 etapas corren EN PARALELO:** cuando img1 se descarga, inmediatamente se empuja a resize + convert + watermark. Mientras tanto, img2 y img3 se siguen descargando. **Todo al mismo tiempo con hilos reales del SO.**
 
 ---
 ---

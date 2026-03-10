@@ -1,64 +1,67 @@
+// ═══════════════════════════════════════════════════════════════
+// GESTOR DE HILOS DE CONVERSIÓN — Trabaja EN PARALELO con resize y watermark
+// Toma el archivo descargado original, NO depende de otra etapa
+// ═══════════════════════════════════════════════════════════════
+import { Worker } from 'worker_threads';
 import path from 'path';
-import sharp from 'sharp';
+import { fileURLToPath } from 'url';
 import { stateStore } from '../core/stateStore.js';
 import { errorManager } from '../core/errorManager.js';
-import { config } from '../config/config.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function lanzarWorkersConversion(n, jobId, qm) {
-  console.log(`[CONVERSION] Lanzando ${n} workers para job ${jobId.slice(0, 8)}...`);
-  for (let i = 1; i <= n; i++) {
-    escucharCola(`Conversion-W${i}`, jobId, qm);
-  }
-}
-
-function escucharCola(workerNombre, jobId, qm) {
+  console.log(`[CONVERSION] Lanzando ${n} HILOS REALES para job ${jobId.slice(0, 8)}...`);
   const cola = qm.conversion;
+  const threads = [];
 
-  cola.on('itemDisponible', async () => {
-    const item = cola.pop();
-    if (!item) return;
+  for (let i = 1; i <= n; i++) {
+    const workerNombre = `Conversion-W${i}`;
 
-    item.workerNombre = workerNombre;
-    await procesarConversion(item, qm);
-    cola.terminarItem();
-  });
-}
+    const thread = new Worker(
+      path.join(__dirname, 'convert.thread.js'),
+      { workerData: { workerNombre } }
+    );
 
-async function procesarConversion(item, qm) {
-  const inicio          = Date.now();
-  const formatoOriginal = item.extension.replace('.', '').toUpperCase();
+    let ocupado = false;
 
-  try {
-    console.log(`[${item.workerNombre}] Convirtiendo: ${path.basename(item.rutaActual)} → PNG`);
+    const intentarProcesar = () => {
+      if (ocupado) return;
+      const item = cola.pop();
+      if (!item) return;
+      ocupado = true;
+      item.workerNombre = workerNombre;
+      thread.postMessage({ item });
+    };
 
-    const nombreSalida = `${item.nombreBase}_formato_cambiado.png`;
-    const rutaSalida   = path.join(config.storage.converted, nombreSalida);
+    cola.on('itemDisponible', intentarProcesar);
 
-    await sharp(item.rutaActual)
-      .png({ quality: 90, compressionLevel: 6 })
-      .toFile(rutaSalida);
+    thread.on('message', async (msg) => {
+      ocupado = false;
 
-    const tiempoSeg = (Date.now() - inicio) / 1000;
+      if (msg.tipo === 'completado') {
+        await stateStore.registrarResultado(
+          'conversion', msg.item.imagenId, jobId, true,
+          msg.resultado.tiempoSeg, msg.resultado
+        );
+        // ⭐ NO empuja a ninguna cola — esta etapa es independiente
+      } else if (msg.tipo === 'error') {
+        await errorManager.registrarError(
+          'conversion', msg.item, new Error(msg.error), msg.tiempoSeg
+        );
+      }
 
-    item.rutaActual = rutaSalida;
-    item.nombreBase = `${item.nombreBase}_formato_cambiado`;
-    item.extension  = '.png';
-
-    await stateStore.registrarResultado('conversion', item.imagenId, item.jobId, true, tiempoSeg, {
-      estado:          'CONVERTIDA',
-      workerNombre:    item.workerNombre,
-      tiempoSeg,
-      ruta:            rutaSalida,
-      formatoOriginal,
-      error:           null,
+      cola.terminarItem();
+      intentarProcesar();
     });
 
-    console.log(`[${item.workerNombre}] ✓ ${formatoOriginal} → PNG en ${tiempoSeg.toFixed(2)}s`);
+    thread.on('error', (err) => {
+      console.error(`[${workerNombre}] Error fatal del hilo:`, err);
+      ocupado = false;
+    });
 
-    qm.marcaAgua.push(item);
-
-  } catch (error) {
-    const tiempoSeg = (Date.now() - inicio) / 1000;
-    await errorManager.registrarError('conversion', item, error, tiempoSeg);
+    threads.push(thread);
   }
+
+  return threads;
 }

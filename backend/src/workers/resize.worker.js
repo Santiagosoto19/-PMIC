@@ -1,79 +1,67 @@
+// ═══════════════════════════════════════════════════════════════
+// GESTOR DE HILOS DE REDIMENSIÓN — Trabaja EN PARALELO con convert y watermark
+// Toma el archivo descargado original, NO depende de otra etapa
+// ═══════════════════════════════════════════════════════════════
+import { Worker } from 'worker_threads';
 import path from 'path';
-import sharp from 'sharp';
+import { fileURLToPath } from 'url';
 import { stateStore } from '../core/stateStore.js';
 import { errorManager } from '../core/errorManager.js';
-import { config } from '../config/config.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function lanzarWorkersRedimension(n, jobId, qm) {
-  console.log(`[REDIMENSION] Lanzando ${n} workers para job ${jobId.slice(0, 8)}...`);
-  for (let i = 1; i <= n; i++) {
-    escucharCola(`Redimension-W${i}`, jobId, qm);
-  }
-}
-
-function escucharCola(workerNombre, jobId, qm) {
+  console.log(`[REDIMENSION] Lanzando ${n} HILOS REALES para job ${jobId.slice(0, 8)}...`);
   const cola = qm.redimension;
+  const threads = [];
 
-  cola.on('itemDisponible', async () => {
-    const item = cola.pop();
-    if (!item) return;
+  for (let i = 1; i <= n; i++) {
+    const workerNombre = `Redimension-W${i}`;
 
-    item.workerNombre = workerNombre;
-    await procesarRedimension(item, qm);
-    cola.terminarItem();
-  });
-}
+    const thread = new Worker(
+      path.join(__dirname, 'resize.thread.js'),
+      { workerData: { workerNombre } }
+    );
 
-async function procesarRedimension(item, qm) {
-  const inicio = Date.now();
+    let ocupado = false;
 
-  try {
-    console.log(`[${item.workerNombre}] Redimensionando: ${path.basename(item.rutaActual)}`);
+    const intentarProcesar = () => {
+      if (ocupado) return;
+      const item = cola.pop();
+      if (!item) return;
+      ocupado = true;
+      item.workerNombre = workerNombre;
+      thread.postMessage({ item });
+    };
 
-    const metadata      = await sharp(item.rutaActual).metadata();
-    const anchoOriginal = metadata.width;
-    const altoOriginal  = metadata.height;
-    const maxDim        = config.pipeline.maxDimension;
+    cola.on('itemDisponible', intentarProcesar);
 
-    let anchoFinal = anchoOriginal;
-    let altoFinal  = altoOriginal;
+    thread.on('message', async (msg) => {
+      ocupado = false;
 
-    if (anchoOriginal > maxDim || altoOriginal > maxDim) {
-      const ratio = Math.min(maxDim / anchoOriginal, maxDim / altoOriginal);
-      anchoFinal  = Math.round(anchoOriginal * ratio);
-      altoFinal   = Math.round(altoOriginal  * ratio);
-    }
+      if (msg.tipo === 'completado') {
+        await stateStore.registrarResultado(
+          'redimension', msg.item.imagenId, jobId, true,
+          msg.resultado.tiempoSeg, msg.resultado
+        );
+        // ⭐ NO empuja a ninguna cola — esta etapa es independiente
+      } else if (msg.tipo === 'error') {
+        await errorManager.registrarError(
+          'redimension', msg.item, new Error(msg.error), msg.tiempoSeg
+        );
+      }
 
-    const nombreSalida = `${item.nombreBase}_redimensionado${item.extension}`;
-    const rutaSalida   = path.join(config.storage.resized, nombreSalida);
-
-    await sharp(item.rutaActual)
-      .resize(anchoFinal, altoFinal, { fit: 'inside', withoutEnlargement: true })
-      .toFile(rutaSalida);
-
-    const tiempoSeg = (Date.now() - inicio) / 1000;
-
-    item.rutaActual = rutaSalida;
-    item.nombreBase = `${item.nombreBase}_redimensionado`;
-
-    await stateStore.registrarResultado('redimension', item.imagenId, item.jobId, true, tiempoSeg, {
-      estado:       'REDIMENSIONADA',
-      workerNombre: item.workerNombre,
-      tiempoSeg,
-      ruta:         rutaSalida,
-      anchoOriginal,
-      altoOriginal,
-      anchoFinal,
-      altoFinal,
-      error:        null,
+      cola.terminarItem();
+      intentarProcesar();
     });
 
-    console.log(`[${item.workerNombre}] ✓ ${anchoOriginal}x${altoOriginal} → ${anchoFinal}x${altoFinal} en ${tiempoSeg.toFixed(2)}s`);
+    thread.on('error', (err) => {
+      console.error(`[${workerNombre}] Error fatal del hilo:`, err);
+      ocupado = false;
+    });
 
-    qm.conversion.push(item);
-
-  } catch (error) {
-    const tiempoSeg = (Date.now() - inicio) / 1000;
-    await errorManager.registrarError('redimension', item, error, tiempoSeg);
+    threads.push(thread);
   }
+
+  return threads;
 }

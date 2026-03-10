@@ -1,75 +1,65 @@
+// ═══════════════════════════════════════════════════════════════
+// GESTOR DE HILOS DE MARCA DE AGUA — Crea Worker Threads reales
+// ═══════════════════════════════════════════════════════════════
+import { Worker } from 'worker_threads';
 import path from 'path';
-import sharp from 'sharp';
+import { fileURLToPath } from 'url';
 import { stateStore } from '../core/stateStore.js';
 import { errorManager } from '../core/errorManager.js';
-import { config } from '../config/config.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function lanzarWorkersMarcaAgua(n, jobId, qm) {
-  console.log(`[MARCA_AGUA] Lanzando ${n} workers para job ${jobId.slice(0, 8)}...`);
-  for (let i = 1; i <= n; i++) {
-    escucharCola(`MarcaAgua-W${i}`, jobId, qm);
-  }
-}
-
-function escucharCola(workerNombre, jobId, qm) {
+  console.log(`[MARCA_AGUA] Lanzando ${n} HILOS REALES para job ${jobId.slice(0, 8)}...`);
   const cola = qm.marcaAgua;
+  const threads = [];
 
-  cola.on('itemDisponible', async () => {
-    const item = cola.pop();
-    if (!item) return;
+  for (let i = 1; i <= n; i++) {
+    const workerNombre = `MarcaAgua-W${i}`;
 
-    item.workerNombre = workerNombre;
-    await procesarMarcaAgua(item);
-    cola.terminarItem();
-  });
-}
+    const thread = new Worker(
+      path.join(__dirname, 'watermark.thread.js'),
+      { workerData: { workerNombre } }
+    );
 
-async function procesarMarcaAgua(item) {
-  const inicio = Date.now();
+    let ocupado = false;
 
-  try {
-    console.log(`[${item.workerNombre}] Aplicando marca de agua: ${path.basename(item.rutaActual)}`);
+    const intentarProcesar = () => {
+      if (ocupado) return;
+      const item = cola.pop();
+      if (!item) return;
+      ocupado = true;
+      item.workerNombre = workerNombre;
+      thread.postMessage({ item });
+    };
 
-    const metadata = await sharp(item.rutaActual).metadata();
-    const ancho    = metadata.width;
-    const alto     = metadata.height;
+    cola.on('itemDisponible', intentarProcesar);
 
-    const tamanoFuente = Math.max(16, Math.round(ancho / 15));
-    const texto        = 'PMIC © 2024';
+    thread.on('message', async (msg) => {
+      ocupado = false;
 
-    const svgMarcaAgua = Buffer.from(`
-      <svg width="${ancho}" height="${alto}">
-        <style>
-          .marca  { fill: rgba(255,255,255,0.65); font-size: ${tamanoFuente}px; font-family: Arial, sans-serif; font-weight: bold; }
-          .sombra { fill: rgba(0,0,0,0.4);        font-size: ${tamanoFuente}px; font-family: Arial, sans-serif; font-weight: bold; }
-        </style>
-        <text x="${ancho - 20}" y="${alto - 18}" text-anchor="end" class="sombra">${texto}</text>
-        <text x="${ancho - 22}" y="${alto - 20}" text-anchor="end" class="marca">${texto}</text>
-      </svg>
-    `);
+      if (msg.tipo === 'completado') {
+        await stateStore.registrarResultado(
+          'marcaAgua', msg.item.imagenId, jobId, true,
+          msg.resultado.tiempoSeg, msg.resultado
+        );
+      } else if (msg.tipo === 'error') {
+        await errorManager.registrarError(
+          'marcaAgua', msg.item, new Error(msg.error), msg.tiempoSeg
+        );
+      }
 
-    const nombreSalida = `${item.nombreBase}_marca_agua.png`;
-    const rutaSalida   = path.join(config.storage.watermarked, nombreSalida);
-
-    await sharp(item.rutaActual)
-      .composite([{ input: svgMarcaAgua, blend: 'over' }])
-      .png()
-      .toFile(rutaSalida);
-
-    const tiempoSeg = (Date.now() - inicio) / 1000;
-
-    await stateStore.registrarResultado('marcaAgua', item.imagenId, item.jobId, true, tiempoSeg, {
-      estado:       'COMPLETADA',
-      workerNombre: item.workerNombre,
-      tiempoSeg,
-      ruta:         rutaSalida,
-      error:        null,
+      cola.terminarItem();
+      intentarProcesar();
     });
 
-    console.log(`[${item.workerNombre}] ✓ Marca de agua aplicada en ${tiempoSeg.toFixed(2)}s`);
+    thread.on('error', (err) => {
+      console.error(`[${workerNombre}] Error fatal del hilo:`, err);
+      ocupado = false;
+    });
 
-  } catch (error) {
-    const tiempoSeg = (Date.now() - inicio) / 1000;
-    await errorManager.registrarError('marcaAgua', item, error, tiempoSeg);
+    threads.push(thread);
   }
+
+  return threads;
 }

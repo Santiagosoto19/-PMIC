@@ -1,96 +1,73 @@
-import fs from 'fs';
+// ═══════════════════════════════════════════════════════════════
+// GESTOR DE HILOS DE DESCARGA — Crea Worker Threads reales
+// Después de descargar, empuja a las 3 colas EN PARALELO
+// ═══════════════════════════════════════════════════════════════
+import { Worker } from 'worker_threads';
 import path from 'path';
-import { pipeline as streamPipeline } from 'stream/promises';
+import { fileURLToPath } from 'url';
 import { stateStore } from '../core/stateStore.js';
 import { errorManager } from '../core/errorManager.js';
-import { config } from '../config/config.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function lanzarWorkersDescarga(n, jobId, qm) {
-  console.log(`[DESCARGA] Lanzando ${n} workers para job ${jobId.slice(0, 8)}...`);
-  for (let i = 1; i <= n; i++) {
-    escucharCola(`Descarga-W${i}`, jobId, qm);
-  }
-}
-
-function escucharCola(workerNombre, jobId, qm) {
+  console.log(`[DESCARGA] Lanzando ${n} HILOS REALES para job ${jobId.slice(0, 8)}...`);
   const cola = qm.descarga;
+  const threads = [];
 
-  cola.on('itemDisponible', async () => {
-    const item = cola.pop();
-    if (!item) return;
+  for (let i = 1; i <= n; i++) {
+    const workerNombre = `Descarga-W${i}`;
 
-    item.workerNombre = workerNombre;
-    await procesarDescarga(item, qm);
-    cola.terminarItem();
-  });
-}
-
-async function procesarDescarga(item, qm) {
-  const inicio = Date.now();
-
-  try {
-    console.log(`[${item.workerNombre}] Descargando: ${item.urlOriginal}`);
-
-    const response = await fetch(item.urlOriginal, {
-      signal: AbortSignal.timeout(30000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; PMIC/1.0)'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const extension     = obtenerExtension(item.urlOriginal, response.headers.get('content-type'));
-    const nombreArchivo = `${item.imagenId}${extension}`;
-    const rutaDestino   = path.join(config.storage.downloads, nombreArchivo);
-
-    await streamPipeline(
-      response.body,
-      fs.createWriteStream(rutaDestino)
+    const thread = new Worker(
+      path.join(__dirname, 'download.thread.js'),
+      { workerData: { workerNombre } }
     );
 
-    const tamanoMb  = fs.statSync(rutaDestino).size / (1024 * 1024);
-    const tiempoSeg = (Date.now() - inicio) / 1000;
+    let ocupado = false;
 
-    item.rutaActual = rutaDestino;
-    item.nombreBase = item.imagenId;
-    item.extension  = extension;
+    const intentarProcesar = () => {
+      if (ocupado) return;
+      const item = cola.pop();
+      if (!item) return;
+      ocupado = true;
+      item.workerNombre = workerNombre;
+      thread.postMessage({ item });
+    };
 
-    await stateStore.registrarResultado('descarga', item.imagenId, item.jobId, true, tiempoSeg, {
-      estado:       'DESCARGADA',
-      workerNombre: item.workerNombre,
-      tiempoSeg,
-      ruta:         rutaDestino,
-      tamanoMb:     parseFloat(tamanoMb.toFixed(4)),
-      error:        null,
+    cola.on('itemDisponible', intentarProcesar);
+
+    thread.on('message', async (msg) => {
+      ocupado = false;
+
+      if (msg.tipo === 'completado') {
+        await stateStore.registrarResultado(
+          'descarga', msg.item.imagenId, jobId, true,
+          msg.resultado.tiempoSeg, msg.resultado
+        );
+
+        // ⭐ CLAVE: Empujar a las 3 colas AL MISMO TIEMPO
+        // Cada cola recibe una COPIA del item con la ruta del archivo descargado
+        qm.redimension.push({ ...msg.item });
+        qm.conversion.push({ ...msg.item });
+        qm.marcaAgua.push({ ...msg.item });
+
+      } else if (msg.tipo === 'error') {
+        await errorManager.registrarError(
+          'descarga', msg.item, new Error(msg.error), msg.tiempoSeg
+        );
+      }
+
+      cola.terminarItem();
+      intentarProcesar();
     });
 
-    console.log(`[${item.workerNombre}] ✓ ${nombreArchivo} (${tamanoMb.toFixed(2)} MB) en ${tiempoSeg.toFixed(2)}s`);
+    thread.on('error', (err) => {
+      console.error(`[${workerNombre}] Error fatal del hilo:`, err);
+      ocupado = false;
+    });
 
-    qm.redimension.push(item);
-
-  } catch (error) {
-    const tiempoSeg = (Date.now() - inicio) / 1000;
-    await errorManager.registrarError('descarga', item, error, tiempoSeg);
+    threads.push(thread);
   }
-}
 
-function obtenerExtension(url, contentType) {
-  try {
-    const ext = path.extname(new URL(url).pathname).toLowerCase();
-    if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(ext)) {
-      return ext;
-    }
-  } catch (_) {}
-
-  const mapa = {
-    'image/jpeg': '.jpg',
-    'image/png':  '.png',
-    'image/gif':  '.gif',
-    'image/webp': '.webp',
-    'image/bmp':  '.bmp',
-  };
-  return mapa[contentType?.split(';')[0]] || '.jpg';
+  return threads;
 }

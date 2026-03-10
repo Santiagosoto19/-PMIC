@@ -42,10 +42,10 @@ export const jobRepository = {
   // ya sea con éxito o con error capturado por el EM
   async incrementarMetrica(jobId, etapa, exito, tiempoSeg) {
     const cols = {
-      descarga:    { proc: 'desc_procesados', fall: 'desc_fallidos', t: 'desc_tiempo_total' },
+      descarga: { proc: 'desc_procesados', fall: 'desc_fallidos', t: 'desc_tiempo_total' },
       redimension: { proc: 'redi_procesados', fall: 'redi_fallidos', t: 'redi_tiempo_total' },
-      conversion:  { proc: 'conv_procesados', fall: 'conv_fallidos', t: 'conv_tiempo_total' },
-      marcaAgua:   { proc: 'agua_procesados', fall: 'agua_fallidos', t: 'agua_tiempo_total' },
+      conversion: { proc: 'conv_procesados', fall: 'conv_fallidos', t: 'conv_tiempo_total' },
+      marcaAgua: { proc: 'agua_procesados', fall: 'agua_fallidos', t: 'agua_tiempo_total' },
     }[etapa];
 
     const query = exito
@@ -61,8 +61,8 @@ export const jobRepository = {
   },
 
 
-async verificarCompletado(jobId) {
-  const result = await pool.query(`
+  async verificarCompletado(jobId) {
+    const result = await pool.query(`
     SELECT COUNT(*) AS pendientes
     FROM imagenes
     WHERE job_id = $1
@@ -74,23 +74,24 @@ async verificarCompletado(jobId) {
         'ERROR_MARCA_AGUA'
       )
   `, [jobId]);
-  return parseInt(result.rows[0].pendientes) === 0;
-}, 
+    return parseInt(result.rows[0].pendientes) === 0;
+  },
 
   async determinarEstadoFinal(jobId) {
     const job = await this.obtenerPorId(jobId);
-    const errores = job.desc_fallidos + job.agua_fallidos;
+    // Contar errores de TODAS las etapas (descarga + 3 paralelas)
+    const errores = job.desc_fallidos + job.redi_fallidos + job.conv_fallidos + job.agua_fallidos;
 
-    const estado = errores === 0            ? 'COMPLETADO'
-                 : errores < job.urls_totales ? 'COMPLETADO_CON_ERRORES'
-                 :                             'FALLIDO';
+    const estado = errores === 0 ? 'COMPLETADO'
+      : errores < job.urls_totales ? 'COMPLETADO_CON_ERRORES'
+        : 'FALLIDO';
 
     await this.actualizarEstado(jobId, estado);
     return estado;
   },
 
 
-async listarTodos() {
+  async listarTodos() {
     const result = await pool.query(`
       SELECT * FROM jobs
       ORDER BY fecha_inicio DESC

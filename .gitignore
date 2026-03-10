@@ -1,3 +1,2 @@
 node_modules/
-backend/storage/
-backend/.env
+backend/.env.example

@@ -3,11 +3,17 @@ import { EventEmitter } from 'events';
 class Queue extends EventEmitter {
   constructor(nombre) {
     super();
-    this.nombre   = nombre;
-    this._items   = [];
+    this.nombre = nombre;
+    this._items = [];
     this._activos = 0;
-    this._total   = 0;
-    this._fin     = 0;
+    this._total = 0;
+    this._fin = 0;
+    this._esperados = 0; // ⭐ Cuántos items se esperan en total
+  }
+
+  // Indicar cuántos items se esperan (para colas que reciben items desde otra etapa)
+  setEsperados(n) {
+    this._esperados = n;
   }
 
   push(item) {
@@ -16,15 +22,13 @@ class Queue extends EventEmitter {
     this.emit('itemDisponible');
   }
 
-// En queueManager.js — reemplaza pushMuchos
-pushMuchos(items) {
-
-  items.forEach(item => {
-    this._items.push(item);
-    this._total += 1;
-    this.emit('itemDisponible'); // ← emitir por cada item, no al final
-  });
-}
+  pushMuchos(items) {
+    items.forEach(item => {
+      this._items.push(item);
+      this._total += 1;
+      this.emit('itemDisponible');
+    });
+  }
 
   pop() {
     if (this._items.length === 0) return null;
@@ -34,14 +38,23 @@ pushMuchos(items) {
 
   terminarItem() {
     this._activos -= 1;
-    this._fin     += 1;
+    this._fin += 1;
+
+    // La cola está vacía cuando:
+    // - No hay items pendientes ni activos
+    // - Ya se procesaron todos los esperados (si se definieron)
     if (this._items.length === 0 && this._activos === 0) {
-      this.emit('colaVacia');
+      if (this._esperados === 0 || this._fin >= this._esperados) {
+        this.emit('colaVacia');
+      }
     }
   }
 
   get estaVacia() {
-    return this._items.length === 0 && this._activos === 0;
+    if (this._esperados > 0) {
+      return this._fin >= this._esperados && this._items.length === 0 && this._activos === 0;
+    }
+    return this._items.length === 0 && this._activos === 0 && this._total > 0;
   }
 
   get pendientes() {
@@ -61,25 +74,25 @@ pushMuchos(items) {
 
 class QueueManager {
   constructor() {
-    this.descarga    = new Queue('DESCARGA');
+    this.descarga = new Queue('DESCARGA');
     this.redimension = new Queue('REDIMENSION');
-    this.conversion  = new Queue('CONVERSION');
-    this.marcaAgua   = new Queue('MARCA_AGUA');
+    this.conversion = new Queue('CONVERSION');
+    this.marcaAgua = new Queue('MARCA_AGUA');
   }
 
   resetear() {
-    this.descarga    = new Queue('DESCARGA');
+    this.descarga = new Queue('DESCARGA');
     this.redimension = new Queue('REDIMENSION');
-    this.conversion  = new Queue('CONVERSION');
-    this.marcaAgua   = new Queue('MARCA_AGUA');
+    this.conversion = new Queue('CONVERSION');
+    this.marcaAgua = new Queue('MARCA_AGUA');
   }
 
   resumen() {
     return {
-      descarga:    { pendientes: this.descarga.pendientes,    activos: this.descarga._activos },
-      redimension: { pendientes: this.redimension.pendientes, activos: this.redimension._activos },
-      conversion:  { pendientes: this.conversion.pendientes,  activos: this.conversion._activos },
-      marcaAgua:   { pendientes: this.marcaAgua.pendientes,   activos: this.marcaAgua._activos },
+      descarga: { pendientes: this.descarga.pendientes, activos: this.descarga._activos, procesados: this.descarga._fin },
+      redimension: { pendientes: this.redimension.pendientes, activos: this.redimension._activos, procesados: this.redimension._fin },
+      conversion: { pendientes: this.conversion.pendientes, activos: this.conversion._activos, procesados: this.conversion._fin },
+      marcaAgua: { pendientes: this.marcaAgua.pendientes, activos: this.marcaAgua._activos, procesados: this.marcaAgua._fin },
     };
   }
 }

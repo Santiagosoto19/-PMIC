@@ -9,31 +9,41 @@ export async function ejecutarPipeline(jobId, workItems, workersConfig) {
   console.log(`[PIPELINE] Hilos: Descarga=${workersConfig.descarga}, Redimensión=${workersConfig.redimension}, Conversión=${workersConfig.conversion}, MarcaAgua=${workersConfig.marcaAgua}`);
 
   const qm = new QueueManager();
+  const total = workItems.length;
 
-  // ⭐ Lanzar TODOS los hilos de TODAS las etapas
+  // ⭐ Decirle a cada cola cuántos items esperar
+  // Así no resuelven prematuramente cuando empiezan vacías
+  qm.redimension.setEsperados(total);
+  qm.conversion.setEsperados(total);
+  qm.marcaAgua.setEsperados(total);
+
+  // ⭐ Lanzar TODOS los hilos de las 4 etapas AL INICIO
   const hilosDescarga = lanzarWorkersDescarga(workersConfig.descarga, jobId, qm);
   const hilosRedimension = lanzarWorkersRedimension(workersConfig.redimension, jobId, qm);
   const hilosConversion = lanzarWorkersConversion(workersConfig.conversion, jobId, qm);
   const hilosMarcaAgua = lanzarWorkersMarcaAgua(workersConfig.marcaAgua, jobId, qm);
 
-  // Empujar todas las URLs a la cola de descarga
+  // Empujar URLs a la cola de descarga
   qm.descarga.pushMuchos(workItems);
 
-  // 1. Esperar que TODAS las descargas terminen
-  await qm.descarga.esperarVacia();
-  hilosDescarga.forEach(t => t.terminate());
-  console.log(`[PIPELINE] ✓ DESCARGA completada`);
+  // ⭐⭐ LAS 4 ETAPAS CORREN EN PARALELO ⭐⭐
+  // - Descarga descarga imagen 5 mientras...
+  // - Resize redimensiona imagen 3 mientras...
+  // - Convert convierte imagen 2 mientras...
+  // - Watermark marca imagen 1
+  // TODO AL MISMO TIEMPO
+  console.log(`[PIPELINE] ⚡ Las 4 etapas corren EN PARALELO con hilos reales del SO`);
 
-  // 2. ⭐ Esperar las 3 etapas EN PARALELO (corren AL MISMO TIEMPO)
-  console.log(`[PIPELINE] ⚡ Ejecutando RESIZE + CONVERT + WATERMARK en PARALELO...`);
   await Promise.all([
+    qm.descarga.esperarVacia(),
     qm.redimension.esperarVacia(),
     qm.conversion.esperarVacia(),
     qm.marcaAgua.esperarVacia(),
   ]);
 
-  // Terminar todos los hilos
-  [...hilosRedimension, ...hilosConversion, ...hilosMarcaAgua].forEach(t => t.terminate());
-  console.log(`[PIPELINE] ✓ RESIZE + CONVERT + WATERMARK completadas en paralelo`);
-  console.log(`[PIPELINE] Job ${jobId.slice(0, 8)}... finalizado — todos los hilos terminados`);
+  // Terminar TODOS los hilos
+  [...hilosDescarga, ...hilosRedimension, ...hilosConversion, ...hilosMarcaAgua]
+    .forEach(t => t.terminate());
+
+  console.log(`[PIPELINE] ✓ Job ${jobId.slice(0, 8)}... finalizado — todos los hilos terminados`);
 }

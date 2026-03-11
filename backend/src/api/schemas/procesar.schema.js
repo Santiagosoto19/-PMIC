@@ -20,19 +20,19 @@ export const procesarBodySchema = {
       required: ['descarga', 'redimension', 'conversion', 'marcaAgua'],
       properties: {
         descarga: {
-          type: 'integer', minimum: 1, maximum: 10,
+          type: 'integer', minimum: 1,
           description: 'Número de workers para descarga'
         },
         redimension: {
-          type: 'integer', minimum: 1, maximum: 8,
+          type: 'integer', minimum: 1,
           description: 'Número de workers para redimensionamiento'
         },
         conversion: {
-          type: 'integer', minimum: 1, maximum: 8,
+          type: 'integer', minimum: 1,
           description: 'Número de workers para conversión de formato'
         },
         marcaAgua: {
-          type: 'integer', minimum: 1, maximum: 8,
+          type: 'integer', minimum: 1,
           description: 'Número de workers para marca de agua'
         }
       }

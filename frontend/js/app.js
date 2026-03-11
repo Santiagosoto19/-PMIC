@@ -1,5 +1,4 @@
 const workers = { descarga: 2, redimension: 2, conversion: 2, marcaAgua: 2 };
-const MAX = { descarga: 10, redimension: 8, conversion: 8, marcaAgua: 8 };
 const MIN = 1;
 
 // Actualizar contador de URLs al escribir
@@ -10,7 +9,7 @@ document.getElementById('urls').addEventListener('input', function () {
 
 function cambiarWorker(etapa, delta) {
   const nuevo = workers[etapa] + delta;
-  if (nuevo < MIN || nuevo > MAX[etapa]) return;
+  if (nuevo < MIN) return;  
   workers[etapa] = nuevo;
   document.getElementById(`val-${etapa}`).textContent = nuevo;
 }

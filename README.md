@@ -1,4 +1,11 @@
 # PMIC — Plataforma de Procesamiento Masivo de Imágenes Concurrente
+```bash
+Integrantes:
+
+- Santiago Soto 
+- Benis Adrian 
+- Carlos Olaya 
+```
 
 ## Requisitos
 

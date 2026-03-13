@@ -7,6 +7,7 @@ class Queue extends EventEmitter {
     this._items = [];
     this._activos = 0;
     this._total = 0;
+
     this._fin = 0;
     this._esperados = 0; // ⭐ Cuántos items se esperan en total
   }
